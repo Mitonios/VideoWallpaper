@@ -1,0 +1,175 @@
+<Window x:Class="VideoWallpaper.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.modernwpf.com/2019"
+        Title="Video Wallpaper"
+        Icon="pack://application:,,,/icon.ico"
+        Width="440" Height="460"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource SystemControlPageBackgroundAltHighBrush}"
+        Foreground="{DynamicResource SystemControlPageTextBaseHighBrush}"
+        ui:ThemeManager.IsThemeAware="True"
+        ui:ThemeManager.RequestedTheme="Dark">
+    <Window.Resources>
+        <!-- Toggle Switch Style -->
+        <Style x:Key="ToggleSwitchStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="48"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Grid>
+                            <Border x:Name="Background"
+                                    CornerRadius="12"
+                                    Background="#CCCCCC"
+                                    Width="48" Height="24"/>
+                            <Border x:Name="Thumb"
+                                    CornerRadius="10"
+                                    Width="20" Height="20"
+                                    Background="White"
+                                    HorizontalAlignment="Left"
+                                    Margin="2,0,0,0">
+                                <Border.Effect>
+                                    <DropShadowEffect ShadowDepth="1" BlurRadius="3" Opacity="0.3"/>
+                                </Border.Effect>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Background" Property="Background" Value="#4CAF50"/>
+                                <Setter TargetName="Thumb" Property="Margin" Value="26,0,0,0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="20,15,20,15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Section 1: VIDEO -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="VIDEO" FontWeight="SemiBold" FontSize="11"
+                       Margin="0,0,0,8"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="File nguồn"
+                           VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <Border Grid.Column="1" BorderBrush="#DDD" BorderThickness="1"
+                        CornerRadius="3" Padding="6,4" Margin="0,0,8,0"
+                        Background="{DynamicResource SystemControlPageBackgroundAltHighBrush}">
+                    <TextBlock x:Name="FileNameDisplay"
+                               Text="Chưa chọn file"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center"/>
+                </Border>
+                <Button Grid.Column="2" Content="Browse…"
+                        Padding="12,4" Click="BrowseButton_Click"/>
+            </Grid>
+        </StackPanel>
+
+        <Separator Grid.Row="1" Margin="0,0,0,12"/>
+
+        <!-- Section 2: MAN HINH -->
+        <StackPanel Grid.Row="2" Margin="0,0,0,12">
+            <TextBlock Text="MÀN HÌNH" FontWeight="SemiBold" FontSize="11"
+                       Margin="0,0,0,8"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Hiển thị trên"
+                           VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <ComboBox x:Name="MonitorDropdown" Grid.Column="1"
+                          SelectionChanged="MonitorDropdown_SelectionChanged"/>
+            </Grid>
+        </StackPanel>
+
+        <Separator Grid.Row="3" Margin="0,0,0,12"/>
+
+        <!-- Section 3: PHAT VIDEO -->
+        <StackPanel Grid.Row="4" Margin="0,0,0,12">
+            <TextBlock Text="PHÁT VIDEO" FontWeight="SemiBold" FontSize="11"
+                       Margin="0,0,0,8"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Trạng thái"
+                           VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <ToggleButton x:Name="PlayToggle" Grid.Column="1"
+                              Style="{StaticResource ToggleSwitchStyle}"
+                              Checked="PlayToggle_Changed"
+                              Unchecked="PlayToggle_Changed"/>
+            </Grid>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <Ellipse x:Name="StatusDot" Width="8" Height="8"
+                         Fill="{DynamicResource SystemControlPageTextBaseHighBrush}" Margin="0,0,6,0"
+                         VerticalAlignment="Center"/>
+                <TextBlock x:Name="StatusText" Text="Video đã tạm dừng"
+                           FontSize="12"/>
+            </StackPanel>
+        </StackPanel>
+
+        <Separator Grid.Row="5" Margin="0,0,0,12"/>
+
+        <!-- Section 4: HE THONG -->
+        <StackPanel Grid.Row="6">
+            <TextBlock Text="HỆ THỐNG" FontWeight="SemiBold" FontSize="11"
+                       Margin="0,0,0,8"/>
+            <CheckBox x:Name="AutostartCheckbox"
+                      Content="Khởi động cùng Windows"
+                      Checked="AutostartCheckbox_Changed"
+                      Unchecked="AutostartCheckbox_Changed"/>
+        </StackPanel>
+
+        <!-- Debug Section -->
+        <StackPanel Grid.Row="7" Margin="0,0,0,8" VerticalAlignment="Bottom">
+            <Separator Margin="0,0,0,8"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="DebugLogPath" Grid.Column="0"
+                           Text="Debug log: ..." FontSize="10"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Content="Xem Log" FontSize="11"
+                        Padding="8,3" Click="OpenLogButton_Click"/>
+            </Grid>
+        </StackPanel>
+
+        <!-- Footer -->
+        <Grid Grid.Row="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="SaveStatusText" Grid.Column="0"
+                       Text="Chưa lưu"
+                       VerticalAlignment="Center" FontSize="12"/>
+            <Button x:Name="SaveButton" Grid.Column="1"
+                    Content="Lưu cài đặt" Padding="16,6"
+                    Click="SaveButton_Click"/>
+        </Grid>
+    </Grid>
+</Window>

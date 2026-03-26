@@ -1,0 +1,17 @@
+<Window x:Class="VideoWallpaper.WallpaperWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Icon="pack://application:,,,/icon.ico"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        Background="Black">
+    <MediaElement x:Name="VideoPlayer"
+                  Stretch="UniformToFill"
+                  LoadedBehavior="Manual"
+                  UnloadedBehavior="Stop"
+                  MediaOpened="VideoPlayer_MediaOpened"
+                  MediaFailed="VideoPlayer_MediaFailed"
+                  MediaEnded="VideoPlayer_MediaEnded" />
+</Window>

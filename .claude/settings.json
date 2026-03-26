@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(*)",
+      "mcp:*"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -Command \"(New-Object Media.SoundPlayer 'E:\\BACKUP\\notification.wav').PlaySync()\""
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -Command \"(New-Object Media.SoundPlayer 'E:\\BACKUP\\notification.wav').PlaySync()\""
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "code-simplifier@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "serena@claude-plugins-official": true
+  }
+}

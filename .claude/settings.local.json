@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "WebFetch(*)",
+      "Skill(plan)",
+      "Bash(dotnet build:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "laravel-boost"
+  ],
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -Command \"(New-Object Media.SoundPlayer (Resolve-Path '.claude/notification.wav')).PlaySync()\""
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -Command \"(New-Object Media.SoundPlayer (Resolve-Path '.claude/notification.wav')).PlaySync()\""
+          }
+        ]
+      }
+    ]
+  }
+}
