@@ -5,60 +5,89 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-dotnet build                                          # Build
-dotnet run                                            # Build + run
-dotnet publish -c Release -r win-x64 --self-contained # Publish portable exe
+dotnet build
+dotnet run
+dotnet publish -c Release -r win-x64 --self-contained
 ```
 
-VS Code task `Ctrl+Shift+B` runs `dotnet run` directly.
+VS Code / Cursor: `Ctrl+Shift+B` chạy `dotnet run` trực tiếp (task định nghĩa trong `.vscode/tasks.json`).
 
 ## Architecture
 
-### The wallpaper injection trick
-
-The core mechanism is Win32 desktop layer injection:
-
-1. Send message `0x052C` to the `Progman` window → forces Windows to create a `WorkerW` child window
-2. `EnumWindows` to find the `WorkerW` that comes **after** the window containing `SHELLDLL_DefView` (the desktop icon layer)
-3. `SetParent(wallpaperHwnd, workerW)` — embeds the WPF window at the correct layer: behind desktop icons, in front of the static wallpaper
-
-This is implemented in `Services/WallpaperService.cs`. If `GetWorkerW()` returns `IntPtr.Zero`, the injection fails silently.
-
 ### Two-window design
 
-- **`MainWindow`** — settings UI (440×460px, fixed). Closing hides it (`e.Cancel = true`), app lives in system tray.
-- **`WallpaperWindow`** — the fullscreen video container, no border, no taskbar button. Shown/hidden by `StartPlayback()`/`StopPlayback()`.
+- **`MainWindow`** (440×510px, fixed) — Settings UI. Closing hides it (`e.Cancel = true`), app lives in system tray. Contains all control logic: browse file, monitor select, play toggle, autostart, ffmpeg optimize.
+- **`WallpaperWindow`** — fullscreen video container, no border, no taskbar button. `ShowActivated=False`. Shown/hidden by `StartPlayback()`/`StopPlayback()`.
 
-`WallpaperWindow` must be `Show()`n and have its HWND created **before** `SetParent` is called. Call order matters: `PositionOnMonitor` → `Show` → `GetHandle` → `Attach`.
+### WorkerW injection (the wallpaper trick)
+
+Sequence in `Services/WallpaperService.cs`:
+
+1. `SendMessageTimeout(Progman, 0x052C)` → forces Windows to create a second `WorkerW`
+2. `EnumWindows` → find the `WorkerW` that comes **after** the window containing `SHELLDLL_DefView`
+3. `SetParent(wallpaperHwnd, workerW)` → embeds WPF window at correct layer (behind icons, in front of static wallpaper)
+
+If `GetWorkerW()` returns `IntPtr.Zero`, injection fails silently.
+
+### Call order matters
+
+```text
+PositionOnMonitor()   ← set WPF Left/Top/Width/Height
+Show()                ← creates HWND
+GetHandle()           ← EnsureHandle
+Attach()              ← SetParent into WorkerW
+PositionWindow()      ← SetWindowPos with physical pixels
+PlayVideo()           ← start Storyboard
+```
+
+After `SetParent`, WPF coordinate system breaks. Must use Win32 `SetWindowPos` with physical pixel coordinates (screen coords minus WorkerW origin from `GetWindowRect`).
 
 ### Video playback
 
-Uses `MediaTimeline` in a `Storyboard` with `RepeatBehavior.Forever` for seamless looping (avoids flash on repeat). `MediaElement.LoadedBehavior` must be `Play` (not `Manual`) when controlled by a Storyboard.
+`MediaTimeline` in a `Storyboard` with `RepeatBehavior.Forever` — seamless loop, no flash on repeat. `LoadedBehavior=Manual` required; calling `VideoPlayer.Close()` in `StopVideo()` requires this. Do **not** switch to `LoadedBehavior=Play`.
 
-### Monitor coordinates
+### DPI awareness
 
-`System.Windows.Forms.Screen.Bounds` returns **physical pixel** coordinates. WPF window `Left`/`Top`/`Width`/`Height` are set to these values directly. The project targets `PerMonitorV2` DPI awareness (`<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>` in csproj + `app.manifest`), so WPF window properties accept physical pixel coordinates.
+`PerMonitorV2` declared in both `app.manifest` and `<ApplicationHighDpiMode>` in csproj. `Screen.Bounds` returns physical pixels. WPF window properties accept physical pixel values directly.
+
+### Singleton & IPC
+
+Mutex `"VideoWallpaper_SingleInstance"` for single instance. Second instance uses `RegisterWindowMessage("VideoWallpaper_ShowSettings")` + `PostMessage(HWND_BROADCAST)` to signal the first instance to show Settings, then exits. First instance hooks this message via `HwndSource` on `MainWindow`.
 
 ### Explorer restart recovery
 
-`App.xaml.cs` hooks `HwndSource` on the `MainWindow` handle to receive the `TaskbarCreated` broadcast message (sent when `explorer.exe` restarts). On receipt, `WallpaperService.ReAttach()` is called after a 1s delay to re-run the full WorkerW injection sequence.
+`HwndSource` on `MainWindow` HWND hooks `WM_TASKBAR_CREATED` (broadcast when `explorer.exe` restarts). On receipt, `WallpaperService.ReAttach()` is called after 1s delay to re-run full WorkerW injection.
+
+### Auto-versioning
+
+`<AssemblyVersion>1.0.*</AssemblyVersion>` + `<Deterministic>false</Deterministic>`. Build number = days since 2000-01-01, auto-increments per day. Read at runtime via `Assembly.GetExecutingAssembly().GetName().Version`, displayed in title bar.
+
+### ffmpeg video optimization
+
+`OptimizeButton_Click` in `MainWindow.xaml.cs`: checks `ffmpeg` in PATH, runs async process with `-c:v libx264 -preset fast -crf 23 -vf scale='min(iw,1920)':'min(ih,1080)' -an -movflags +faststart`, outputs `{name}_optimized.mp4`. Progress bar shown during processing.
 
 ### Startup argument
 
-`--minimized` arg: app starts playing immediately without showing `MainWindow`. Written to registry by `AutostartService` at `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+`--minimized`: skip showing `MainWindow`, start playback immediately. Written to registry by `AutostartService` at `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 
 ## Runtime file locations
 
 | File | Path |
-|---|---|
+| --- | --- |
 | Config | `%AppData%\VideoWallpaper\config.json` |
 | Debug log | `%LocalAppData%\VideoWallpaper\debug.log` |
 
 ## Debugging
 
-The app writes a detailed log to `%LocalAppData%\VideoWallpaper\debug.log` (reset on each startup). A "Xem Log" button in the settings UI opens it directly. Key things to check in the log:
+Log resets on each startup. Key entries:
 
-- `WorkerW: 0x00000000` → injection failed; may occur in VMs or with some third-party shells
-- `SetParent failed! Win32Error=...` → permissions issue
-- `[ERROR] MediaFailed!` → codec missing or bad file path
-- `PositionOnMonitor` bounds vs actual `WallpaperWindow` WPF coordinates — mismatch = DPI issue
+| Entry | Meaning |
+| --- | --- |
+| `WorkerW: 0x00000000` | Injection failed (VM or third-party shell) |
+| `SetParent failed! Win32Error=5` | Permissions issue |
+| `MediaFailed! COMException: 0xC00D109B` | Codec missing or unsupported format |
+| `SetWindowPos => ok=False` | DPI/coordinate issue after SetParent |
+
+## Codec support
+
+`MediaElement` uses Windows Media Foundation. MP4 H.264 works natively. MKV/H.265 may require codec pack. `MediaFailed` event shows user-friendly error with codec install hint.

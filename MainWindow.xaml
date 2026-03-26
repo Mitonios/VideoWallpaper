@@ -4,7 +4,7 @@
         xmlns:ui="http://schemas.modernwpf.com/2019"
         Title="Video Wallpaper"
         Icon="pack://application:,,,/icon.ico"
-        Width="440" Height="460"
+        Width="440" Height="510"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource SystemControlPageBackgroundAltHighBrush}"
@@ -82,6 +82,25 @@
                 </Border>
                 <Button Grid.Column="2" Content="Browse…"
                         Padding="12,4" Click="BrowseButton_Click"/>
+            </Grid>
+            <!-- Optimize row -->
+            <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" x:Name="OptimizeProgressPanel" Visibility="Collapsed"
+                            Orientation="Vertical" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <ProgressBar x:Name="OptimizeProgressBar" Height="6" IsIndeterminate="True"
+                                 Margin="0,0,0,3"/>
+                    <TextBlock x:Name="OptimizeStatusText" FontSize="11" Foreground="#AAA"/>
+                </StackPanel>
+                <TextBlock Grid.Column="0" x:Name="OptimizeHintText"
+                           Text="ffmpeg: tối ưu hóa video để giảm RAM/GPU"
+                           FontSize="11" Foreground="#888" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" x:Name="OptimizeButton"
+                        Content="Tối ưu video…" Padding="12,4"
+                        Click="OptimizeButton_Click"/>
             </Grid>
         </StackPanel>
 

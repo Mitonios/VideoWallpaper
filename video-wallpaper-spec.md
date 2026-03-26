@@ -1,261 +1,353 @@
-# Video Wallpaper — Đặc tả kỹ thuật & UI/UX
+# Video Wallpaper — Đặc tả kỹ thuật
 
-## 1. Tổng quan
-
-Ứng dụng desktop Windows cho phép đặt một file video làm hình nền động, hoạt động giống hệt wallpaper tĩnh mặc định của Windows — luôn nằm dưới các icon desktop và tất cả các cửa sổ khác. App chạy nền dưới dạng system tray utility, không chiếm taskbar.
+Tài liệu tham khảo chi tiết cho dự án và các dự án tương tự. Ghi lại mọi quyết định thiết kế, trick kỹ thuật và gotcha đã gặp.
 
 ---
 
-## 2. Stack công nghệ
+## 1. Stack công nghệ
 
-| Thành phần | Lựa chọn |
-|---|---|
-| Ngôn ngữ | C# (.NET 8) |
-| UI framework | WPF (Windows Presentation Foundation) |
-| Video rendering | `MediaElement` (WPF built-in) — dùng DirectShow/Media Foundation, hardware decode DXVA2 |
-| IDE | Cursor (với C# Dev Kit extension) + dotnet CLI |
-| Build | `dotnet build` / `dotnet run` |
-| Config storage | JSON tại `%AppData%\VideoWallpaper\config.json` |
-| Autostart | Registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
+| Thành phần | Lựa chọn | Lý do |
+| --- | --- | --- |
+| Ngôn ngữ | C# 12 (.NET 8) | SDK-style project, top-level namespace, nullable enable |
+| UI Framework | WPF | Native Windows, hardware-accelerated rendering, XAML |
+| UI Theme | ModernWpfUI 0.9.6 | Dark mode Fluent style không cần tự viết style |
+| Video playback | WPF `MediaElement` | Dùng Windows Media Foundation (WMF) / DirectShow, DXVA2 hardware decode tự động |
+| Video loop | `MediaTimeline` + `Storyboard` | `RepeatBehavior.Forever` — loop không flash |
+| Config | `System.Text.Json` | Built-in .NET 8, không cần package ngoài |
+| Monitor detection | `System.Windows.Forms.Screen` | Trả về physical pixel bounds |
+| Autostart | `Microsoft.Win32.Registry` | Ghi `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
+| System tray | `System.Windows.Forms.NotifyIcon` | WPF không có tray built-in, phải dùng WinForms |
+| IPC (singleton) | Win32 `RegisterWindowMessage` + `PostMessage` broadcast | Không cần named pipe, không cần FindWindow |
+| DPI | PerMonitorV2 | `app.manifest` + `<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>` |
+| Win32 P/Invoke | `user32.dll` | Desktop layer injection |
+| Video optimization | ffmpeg (external process) | Async, progress bar, không phụ thuộc vào codec runtime |
+| Versioning | `AssemblyVersion 1.0.*` | `<Deterministic>false</Deterministic>` — build number tự tăng |
 
 ---
 
-## 3. Kiến trúc kỹ thuật
+## 2. Kiến trúc hai cửa sổ
 
-### 3.1 Cửa sổ video wallpaper
+### MainWindow (Settings UI)
 
-- Tạo một `Window` WPF riêng biệt (gọi là `WallpaperWindow`) chứa `MediaElement` fullscreen.
-- Dùng Windows API (`SetParent` / `FindWindowEx`) để gắn `WallpaperWindow` vào handle `WorkerW` — đây là layer nằm phía sau các icon desktop nhưng phía trên wallpaper tĩnh, đúng với hành vi wallpaper mặc định của Windows.
-- `WallpaperWindow` không có border, không có taskbar button (`ShowInTaskbar = false`), không thể focus hay tương tác.
+- Kích thước cố định 440×510px, `ResizeMode=NoResize`
+- Closing event bị cancel (`e.Cancel = true`) — chỉ ẩn, không đóng
+- Chứa toàn bộ logic điều khiển: browse file, chọn monitor, toggle play, autostart, ffmpeg optimize
+- Nhận event `MediaLoadFailed` từ `WallpaperWindow` để hiện lỗi codec
 
-### 3.2 Chọn màn hình
+### WallpaperWindow (Video container)
 
-- Dùng `System.Windows.Forms.Screen.AllScreens` để lấy danh sách monitor.
-- Đặt `WallpaperWindow.Left`, `WallpaperWindow.Top`, `Width`, `Height` theo bounds của màn hình được chọn.
-- Lưu monitor theo `DeviceName` (ví dụ `\\.\DISPLAY2`) thay vì index để tránh lệch khi thay đổi cấu hình màn hình.
+- `WindowStyle=None`, `ResizeMode=NoResize`, `ShowInTaskbar=False`, `ShowActivated=False`
+- `Background=Black` — khi không có video thì đen, không thấy desktop
+- Chứa duy nhất 1 `MediaElement`, `Stretch=UniformToFill`
+- `LoadedBehavior=Manual`, `UnloadedBehavior=Stop`
+- `RenderOptions.BitmapScalingMode=LowQuality` — ưu tiên performance, wallpaper không cần anti-alias
+- `RenderOptions.EdgeMode=Aliased` — tương tự
 
-### 3.3 Vòng lặp video
+**Thứ tự khởi tạo bắt buộc:**
 
-- `MediaElement.LoadedBehavior = Manual`, `MediaElement.UnloadedBehavior = Stop`.
-- Dùng `MediaTimeline` với `RepeatBehavior = RepeatBehavior.Forever` để loop mượt, tránh flash ở điểm loop khi xử lý event thủ công.
-- Khi toggle off: gọi `Stop()`, ẩn `WallpaperWindow`, Windows tự hiển thị lại wallpaper tĩnh gốc.
+```text
+PositionOnMonitor()   ← set Left/Top/Width/Height trước khi Show
+Show()                ← tạo HWND
+GetHandle()           ← lấy HWND (EnsureHandle)
+Attach()              ← SetParent vào WorkerW
+PositionWindow()      ← SetWindowPos với physical pixels
+PlayVideo()           ← bắt đầu phát
+```
 
-### 3.4 System tray
+Nếu đảo thứ tự: HWND chưa tồn tại khi gọi `SetParent` → crash hoặc inject sai.
 
-- Dùng `System.Windows.Forms.NotifyIcon` để tạo tray icon.
-- Context menu chuột phải: **Mở cài đặt** / **Thoát**.
-- Click đơn vào tray icon → hiện `SettingsWindow`.
-- Đóng `SettingsWindow` (nhấn X) → chỉ ẩn cửa sổ, không thoát app (`e.Cancel = true` trong `Closing` event).
+---
 
-### 3.5 Autostart
+## 3. WorkerW Injection — Cơ chế cốt lõi
 
-- Khi checkbox được bật: ghi `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` với giá trị là đường dẫn executable + argument `--minimized`.
-- Khi app khởi động với argument `--minimized`: bỏ qua việc hiện `SettingsWindow`, phát video luôn và thu nhỏ xuống tray.
+Đây là trick chính để video nằm đúng layer wallpaper của Windows.
 
-### 3.6 Config
+### Cấu trúc cửa sổ desktop Windows
 
-```json
-{
-  "videoPath": "C:\\Users\\user\\Videos\\nature_loop.mp4",
-  "monitorDevice": "\\\\.\\DISPLAY1",
-  "isPlaying": true,
-  "autostart": true
+```text
+Desktop
+└── Progman (Program Manager)
+    └── WorkerW
+        └── SHELLDLL_DefView   ← chứa desktop icons
+            └── SysListView32  ← listview icons thực sự
+WorkerW (thứ 2)                ← đây là layer ta cần inject vào
+```
+
+Sau khi gửi message `0x052C` đến `Progman`, Windows tạo thêm một `WorkerW` thứ 2 nằm **sau** `WorkerW` chứa `SHELLDLL_DefView`. Layer này nằm phía sau icons nhưng phía trước wallpaper tĩnh.
+
+### Thuật toán tìm WorkerW đúng
+
+```csharp
+SendMessageTimeout(progman, 0x052C, ...)   // kích hoạt tạo WorkerW thứ 2
+
+EnumWindows(hwnd => {
+    var shellView = FindWindowEx(hwnd, 0, "SHELLDLL_DefView", null);
+    if (shellView != 0) {
+        // hwnd này chứa icons — WorkerW cần tìm là cửa sổ NGAY SAU nó
+        workerW = FindWindowEx(IntPtr.Zero, hwnd, "WorkerW", null);
+    }
+})
+```
+
+`FindWindowEx(IntPtr.Zero, hwnd, "WorkerW", null)` = tìm cửa sổ class "WorkerW" có Z-order **sau** `hwnd` trong danh sách global.
+
+### DPI gotcha sau SetParent
+
+Sau `SetParent(wpfHwnd, workerW)`, WPF coordinate system bị lệch vì window đã chuyển sang child của WorkerW. **Phải dùng Win32 `SetWindowPos` với physical pixel** thay vì set `Left/Top` của WPF window:
+
+```csharp
+// Child coords = screen coords - WorkerW origin
+int childX = screenBounds.X - workerWRect.Left;
+int childY = screenBounds.Y - workerWRect.Top;
+SetWindowPos(hwnd, 0, childX, childY, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+```
+
+`Screen.Bounds` trả về physical pixels. `workerWRect` lấy từ `GetWindowRect(workerW)`.
+
+---
+
+## 4. Video Playback — MediaElement & WMF
+
+### Tại sao dùng MediaTimeline thay vì MediaElement trực tiếp
+
+| Cách | Vấn đề |
+| --- | --- |
+| `MediaEnded` → `Position=0` → `Play()` | Flash trắng/đen ở điểm loop |
+| `MediaTimeline` + `Storyboard` + `RepeatBehavior.Forever` | Loop mượt, không flash |
+
+### Quy tắc LoadedBehavior
+
+- `LoadedBehavior=Manual`: có thể gọi `Play()`, `Pause()`, `Stop()`, `Close()` trực tiếp
+- `LoadedBehavior=Play`: WMF tự quản lý, **không được** gọi các method trên (throw exception)
+- Dùng Storyboard điều khiển: cần `LoadedBehavior=Manual`, gọi `_storyboard.Begin()` / `_storyboard.Stop()`
+
+### Codec support
+
+WPF `MediaElement` dùng Windows Media Foundation trên .NET 8. Các codec được hỗ trợ sẵn:
+
+- **H.264 (AVC)** trong MP4/MKV/AVI — luôn OK
+- **H.265 (HEVC)** — cần "HEVC Video Extensions" từ Microsoft Store
+- **VP9 / AV1** — không hỗ trợ natively, cần K-Lite Codec Pack
+- **MKV container** — thường OK với H.264 bên trong
+
+Lỗi codec: `MediaFailed` với `COMException 0xC00D109B` (`NS_E_WMP_UNSUPPORTED_FORMAT`).
+
+### Hardware rendering hints
+
+```xml
+<MediaElement RenderOptions.BitmapScalingMode="LowQuality"
+              RenderOptions.EdgeMode="Aliased" />
+```
+
+Cho phép GPU sử dụng đường dẫn render nhanh hơn, phù hợp với wallpaper (không cần pixel-perfect).
+
+---
+
+## 5. DPI Awareness
+
+### Cấu hình
+
+Hai nơi phải khai báo đồng bộ:
+
+**`app.manifest`:**
+
+```xml
+<dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/PM</dpiAware>
+<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+```
+
+**`.csproj`:**
+
+```xml
+<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+```
+
+### Hệ quả
+
+- `Screen.Bounds` trả về **physical pixels** (không scale)
+- WPF `Left/Top/Width/Height` nhận **physical pixels** trực tiếp (không bị WPF DPI scaling)
+- Sau `SetParent`, phải dùng Win32 `SetWindowPos` — xem mục 3
+
+---
+
+## 6. Singleton & IPC
+
+### Mutex cho single instance
+
+```csharp
+_mutex = new Mutex(true, "VideoWallpaper_SingleInstance", out bool isNew);
+if (!isNew) { /* instance đã chạy */ }
+```
+
+### IPC bằng RegisterWindowMessage + broadcast
+
+Instance 2 không hiện messagebox mà gửi signal cho instance 1 mở Settings:
+
+```csharp
+// Cả 2 instance đăng ký cùng message name → cùng nhận được ID
+uint msgId = RegisterWindowMessage("VideoWallpaper_ShowSettings");
+
+// Instance 2: broadcast toàn hệ thống rồi tắt
+PostMessage(HWND_BROADCAST, msgId, 0, 0);
+Shutdown();
+
+// Instance 1: HwndSource hook trong MainWindow nhận message
+source.AddHook((hwnd, msg, wParam, lParam, ref handled) => {
+    if ((uint)msg == _showSettingsMsg) {
+        ShowSettings();
+        handled = true;
+    }
+    return IntPtr.Zero;
+});
+```
+
+`RegisterWindowMessage` đảm bảo ID là duy nhất toàn hệ thống, không conflict với app khác. Không cần `FindWindow` để tìm HWND của instance 1.
+
+---
+
+## 7. Explorer Restart Recovery
+
+Khi `explorer.exe` crash hoặc restart, `WorkerW` handle bị invalidate. App lắng nghe broadcast `TaskbarCreated` (Windows gửi khi Explorer hoàn thành khởi động lại):
+
+```csharp
+uint WM_TASKBAR_CREATED = RegisterWindowMessage("TaskbarCreated");
+
+// Trong HwndSource hook:
+if ((uint)msg == WM_TASKBAR_CREATED) {
+    // Delay 1s để Explorer hoàn tất khởi động
+    timer.Interval = 1000ms;
+    timer.Tick => _wallpaperService.ReAttach(hwnd);
 }
+
+// ReAttach:
+_workerW = IntPtr.Zero;
+GetWorkerW();   // tìm WorkerW mới
+SetParent(wpfHwnd, _workerW);
 ```
 
-Đọc config khi khởi động. Nếu `isPlaying = true` → phát video ngay, không cần tương tác.
+HwndSource được gắn vào HWND của `MainWindow` (luôn tồn tại, không bị ẩn/đóng).
 
 ---
 
-## 4. Luồng logic ứng dụng
+## 8. Autostart
 
-### 4.1 Lần đầu mở app (chưa có config)
+```csharp
+// Enable:
+Registry.CurrentUser
+    .OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true)
+    .SetValue("VideoWallpaper", $"\"{exePath}\" --minimized");
 
-```
-Khởi động
-  → Không tìm thấy config.json
-  → Hiện SettingsWindow
-  → Người dùng chọn file video
-  → Chọn màn hình (nếu có nhiều)
-  → Bật toggle (hoặc để mặc định off)
-  → Nhấn "Lưu cài đặt"
-  → Ghi config.json
-  → Phát video ngay nếu toggle = on
-  → App thu vào system tray
+// Disable: DeleteValue("VideoWallpaper")
+// Check: GetValue("VideoWallpaper") != null
 ```
 
-### 4.2 Các lần mở tiếp theo
+Dùng `Environment.ProcessPath` để lấy đường dẫn exe hiện tại (không dùng `Assembly.GetExecutingAssembly().Location` — không đúng với self-contained publish).
 
-```
-Khởi động
-  → Đọc config.json
-  → Nếu isPlaying = true → phát video ngay
-  → App nằm ở system tray, không hiện UI
+Khi khởi động với `--minimized`: bỏ qua `_mainWindow.Show()`, phát video ngay nếu `isPlaying=true`.
+
+---
+
+## 9. Tối ưu Video (ffmpeg integration)
+
+### Luồng
+
+1. Kiểm tra ffmpeg có trong PATH: chạy `ffmpeg -version`, check `ExitCode == 0`
+2. Build args: `-c:v libx264 -preset fast -crf 23 -vf scale='min(iw,1920)':'min(ih,1080)' -an -movflags +faststart`
+3. Chạy async: `Process.Start()` + `await WaitForExitAsync()` — không block UI
+4. Parse `stderr` để lấy thông báo lỗi nếu thất bại
+5. Output: `{input_dir}/{input_name}_optimized.mp4`
+
+### ffmpeg flags quan trọng
+
+| Flag | Tác dụng |
+| --- | --- |
+| `-c:v libx264` | Encode H.264, WPF hỗ trợ native |
+| `-preset fast` | Cân bằng tốc độ/chất lượng encode |
+| `-crf 23` | Chất lượng (18=lossless, 28=thấp), 23 là mặc định |
+| `scale='min(iw,1920)'` | Giới hạn 1920px width, không upscale |
+| `-an` | Bỏ audio track — wallpaper không cần âm thanh, giảm ~30% kích thước |
+| `-movflags +faststart` | Moov atom lên đầu file — WMF start nhanh hơn |
+
+---
+
+## 10. Auto-versioning
+
+```xml
+<!-- VideoWallpaper.csproj -->
+<AssemblyVersion>1.0.*</AssemblyVersion>
+<Deterministic>false</Deterministic>
+<NoWarn>CS7035</NoWarn>
 ```
 
-### 4.3 Khởi động cùng Windows (autostart)
+`1.0.*` = .NET tự tính:
 
-```
-Windows boot
-  → App khởi động với --minimized
-  → Đọc config.json
-  → Phát video ngay (nếu isPlaying = true)
-  → Không hiện SettingsWindow
-  → Chỉ hiện tray icon
-```
+- **Build** = số ngày kể từ 01/01/2000 (tăng mỗi ngày)
+- **Revision** = số giây từ 00:00 chia 2 (tăng trong cùng ngày)
 
-### 4.4 Thay đổi cài đặt
+Đọc lại lúc runtime:
 
-```
-Click tray icon → Mở SettingsWindow
-  → Thay đổi file / màn hình / toggle / autostart
-  → Nhấn "Lưu cài đặt"
-  → Ghi config.json
-  → Áp dụng thay đổi ngay lập tức (không cần restart)
-  → Đóng SettingsWindow → app tiếp tục chạy nền
+```csharp
+var ver = Assembly.GetExecutingAssembly().GetName().Version;
+Title = $"Video Wallpaper v{ver?.Major}.{ver?.Minor}.{ver?.Build}";
+// → "Video Wallpaper v1.0.9581"
 ```
 
 ---
 
-## 5. UI / UX — Cửa sổ Settings
+## 11. Debug Logging
 
-### 5.1 Cấu trúc cửa sổ
-
-- **Kích thước:** cố định, khoảng 440×420px, không thể resize.
-- **Titlebar:** tiêu đề "Video Wallpaper", không có maximize button.
-- **Đóng cửa sổ (X):** chỉ ẩn cửa sổ, không thoát app.
-- Chia thành 4 section rõ ràng, phân cách bởi đường kẻ mỏng.
-
----
-
-### 5.2 Section 1 — Video
-
-**Label section:** `VIDEO`
-
-| Control | Mô tả |
-|---|---|
-| Label `File nguồn` | Text cố định bên trái |
-| Text display (readonly) | Hiển thị tên file đang chọn (chỉ tên file, không phải full path). Placeholder mờ "Chưa chọn file" khi chưa có. |
-| Nút `Browse…` | Mở `OpenFileDialog`, filter: `Video files (*.mp4;*.mkv;*.avi;*.mov)`. Khi chọn xong → cập nhật display ngay. Nếu video đang phát → reload file mới ngay lập tức, không cần nhấn Save. |
-
----
-
-### 5.3 Section 2 — Màn hình
-
-**Label section:** `MÀN HÌNH`
-
-| Control | Mô tả |
-|---|---|
-| Label `Hiển thị trên` | Text cố định bên trái |
-| Dropdown | Liệt kê tất cả monitor theo format: `Display N — [Tên màn hình] (WidthxHeight)`. Ví dụ: `Display 1 — Primary (2560×1440)`, `Display 2 — DELL U2723D (2560×1440)`. |
-
-**Logic dropdown:**
-- Nếu chỉ có 1 màn hình → `IsEnabled = false`, hiển thị mờ.
-- Nếu có ≥ 2 màn hình → enabled, người dùng chọn màn hình muốn đặt wallpaper.
-- Thay đổi dropdown khi video đang phát → di chuyển `WallpaperWindow` sang màn hình mới ngay, không cần Save.
-
----
-
-### 5.4 Section 3 — Phát video
-
-**Label section:** `PHÁT VIDEO`
-
-| Control | Mô tả |
-|---|---|
-| Label `Trạng thái` | Text cố định bên trái |
-| Toggle switch | On/Off. Khi **On**: video phát, màu xanh. Khi **Off**: video dừng, wallpaper tĩnh Windows hiện lại. |
-| Status text | Dòng nhỏ phía dưới toggle. Khi on: `[tên file] đang chạy` kèm dot xanh. Khi off: `Video đã tạm dừng` kèm dot xám. |
-
-**Lưu ý UX:** Status text là feedback quan trọng vì `WallpaperWindow` không hiển thị trước mắt người dùng — đây là cách duy nhất người dùng biết video có đang chạy không.
-
----
-
-### 5.5 Section 4 — Hệ thống
-
-**Label section:** `HỆ THỐNG`
-
-| Control | Mô tả |
-|---|---|
-| Checkbox `Khởi động cùng Windows` | Khi check: ghi registry autostart. Khi uncheck: xóa registry key. Thay đổi có hiệu lực ngay, không cần Save. |
-
----
-
-### 5.6 Footer — Lưu & trạng thái
-
-| Control | Mô tả |
-|---|---|
-| Status nhỏ bên trái | Hiển thị "Đã lưu" (xanh) khi config đã được ghi, hoặc "Chưa lưu" (xám) khi có thay đổi chưa lưu. |
-| Nút `Lưu cài đặt` | Ghi `config.json`. Sau khi nhấn: nút đổi thành "Đã lưu ✓" trong ~1.5 giây rồi reset. Áp dụng thay đổi (màn hình, file) ngay lập tức. |
-
----
-
-## 6. Các vấn đề kỹ thuật cần lưu ý
-
-### 6.1 Gắn window vào WorkerW layer
-
-Đây là phần phức tạp nhất. Windows có một process `explorer.exe` render desktop với 2 layer:
-- `Progman` (Program Manager) — chứa icons
-- `WorkerW` — nằm phía sau icons
-
-Cần dùng `SendMessageTimeout` với message `0x052C` để tạo `WorkerW`, sau đó `SetParent(hwnd, workerW)` để gắn `WallpaperWindow` vào đúng layer. Nếu làm sai, video sẽ hiện đè lên icon hoặc bị các cửa sổ khác che hoàn toàn.
-
-### 6.2 DPI Awareness
-
-Khai báo `<dpiAware>true/PM</dpiAware>` trong `app.manifest` hoặc set `ProcessDPIAwareness` để tọa độ window không bị scale sai trên màn hình HiDPI / 4K với Windows scaling 125–150%.
-
-### 6.3 Loop video không bị flash
-
-`MediaEnded` → `Position = TimeSpan.Zero` → `Play()` có thể gây flash trắng/đen ngắn ở điểm loop. Dùng `MediaTimeline` với `RepeatBehavior = RepeatBehavior.Forever` thay vì xử lý event thủ công để loop mượt hơn.
-
-### 6.4 Hiệu năng
-
-`MediaElement` dùng hardware decode mặc định nên CPU thấp với video HD/2K. Có thể set `RenderOptions.SetBitmapScalingMode(mediaElement, BitmapScalingMode.LowQuality)` nếu muốn ưu tiên performance hơn chất lượng scale.
-
-### 6.5 Khi explorer.exe restart
-
-Nếu người dùng restart `explorer.exe`, handle `WorkerW` sẽ bị invalidate. Cần lắng nghe `SystemEvents` hoặc hook `WM_SETTINGCHANGE` để detect và re-attach `WallpaperWindow`.
-
-### 6.6 Config path không tồn tại
-
-Khi lần đầu chạy, thư mục `%AppData%\VideoWallpaper\` chưa tồn tại → cần `Directory.CreateDirectory()` trước khi ghi file.
-
----
-
-## 7. Cấu trúc project gợi ý
-
+```csharp
+// %LocalAppData%\VideoWallpaper\debug.log
+// Reset mỗi lần startup
+DebugLogger.Log("message");
+DebugLogger.LogError("context", exception);
 ```
+
+Key lines cần check khi debug:
+
+| Log entry | Ý nghĩa |
+| --- | --- |
+| `WorkerW: 0x00000000` | Injection thất bại (VM, third-party shell) |
+| `SetParent failed! Win32Error=5` | Access denied |
+| `MediaFailed! COMException: 0xC00D109B` | Codec không hỗ trợ |
+| `PositionOnMonitor` bounds vs WPF coords | Mismatch = DPI issue |
+| `SetWindowPos => ok=False` | Lỗi sau SetParent |
+
+---
+
+## 12. Cấu trúc project
+
+```text
 VideoWallpaper/
-├── App.xaml
-├── App.xaml.cs              # Entry point, đọc config, xử lý --minimized arg
-├── MainWindow.xaml          # SettingsWindow (UI chính)
-├── MainWindow.xaml.cs
-├── WallpaperWindow.xaml     # Cửa sổ video fullscreen (ẩn khỏi taskbar)
-├── WallpaperWindow.xaml.cs
+├── App.xaml / App.xaml.cs          Entry point, singleton, IPC, tray, explorer recovery
+├── MainWindow.xaml / .cs           Settings UI, ffmpeg optimize, điều khiển playback
+├── WallpaperWindow.xaml / .cs      Video container, MediaElement, Storyboard
 ├── Services/
-│   ├── ConfigService.cs     # Đọc/ghi config.json
-│   ├── MonitorService.cs    # Lấy danh sách màn hình
-│   ├── WallpaperService.cs  # Gắn window vào WorkerW layer
-│   └── AutostartService.cs  # Registry autostart
+│   ├── WallpaperService.cs         WorkerW injection (P/Invoke)
+│   ├── ConfigService.cs            JSON config read/write
+│   ├── MonitorService.cs           Screen enumeration
+│   └── AutostartService.cs         Registry autostart
 ├── Models/
-│   └── AppConfig.cs         # Model config JSON
-└── app.manifest             # DPI awareness declaration
+│   └── AppConfig.cs                Config model (VideoPath, MonitorDevice, IsPlaying, Autostart)
+├── VideoWallpaper.csproj           PerMonitorV2, AssemblyVersion 1.0.*
+└── app.manifest                    DPI awareness declaration
 ```
 
 ---
 
-## 8. Checklist triển khai
+## 13. Checklist cho dự án tương tự
 
-- [ ] Tạo project `dotnet new wpf -n VideoWallpaper`
-- [ ] Implement `AppConfig` model + `ConfigService`
-- [ ] Implement `MonitorService` (lấy danh sách màn hình)
-- [ ] Implement `WallpaperWindow` với `MediaElement` fullscreen
-- [ ] Implement `WallpaperService` (SetParent vào WorkerW)
-- [ ] Implement `AutostartService` (registry)
-- [ ] Build `SettingsWindow` XAML theo layout 4 section
-- [ ] Wire logic: browse file, dropdown màn hình, toggle, save
-- [ ] Xử lý `--minimized` argument
-- [ ] Setup `NotifyIcon` (system tray)
-- [ ] Xử lý `Closing` event (ẩn thay vì đóng)
-- [ ] Test loop video (MediaTimeline RepeatBehavior)
-- [ ] Test DPI awareness trên màn HiDPI
-- [ ] Test explorer.exe restart recovery
+- [ ] `dotnet new wpf -n AppName`
+- [ ] Thêm `app.manifest` với PerMonitorV2 DPI + khai báo trong `.csproj`
+- [ ] Thêm `<UseWindowsForms>true</UseWindowsForms>` cho `Screen` + `NotifyIcon`
+- [ ] Thêm `ModernWpfUI` nếu muốn dark mode Fluent
+- [ ] Implement singleton bằng `Mutex` + `RegisterWindowMessage` IPC
+- [ ] Tạo `WallpaperWindow`: `WindowStyle=None`, `ShowInTaskbar=False`
+- [ ] `WorkerW` injection: `SendMessageTimeout(0x052C)` → `EnumWindows` → `SetParent`
+- [ ] Sau `SetParent`: dùng `SetWindowPos` với physical pixels (không dùng WPF `Left/Top`)
+- [ ] `MediaTimeline` + `RepeatBehavior.Forever` cho loop không flash
+- [ ] `MediaFailed` event để bắt lỗi codec, hiện thông báo rõ ràng
+- [ ] Hook `TaskbarCreated` qua `HwndSource` để re-attach khi explorer restart
+- [ ] Autostart: `Environment.ProcessPath` + `--minimized` arg
+- [ ] `AssemblyVersion 1.0.*` + `Deterministic=false` cho auto-increment build
+- [ ] Debug log file reset mỗi startup

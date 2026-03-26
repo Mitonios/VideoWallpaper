@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
@@ -12,6 +13,15 @@ namespace VideoWallpaper;
 
 public partial class App : Application
 {
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern uint RegisterWindowMessage(string lpString);
+
+    [DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private static readonly IntPtr HWND_BROADCAST = new(0xFFFF);
+    private static uint _showSettingsMsg;
+
     private Mutex? _mutex;
     private WinForms.NotifyIcon? _trayIcon;
     private WallpaperWindow? _wallpaperWindow;
@@ -40,12 +50,14 @@ public partial class App : Application
 
         DebugLogger.Log("App startup begin.");
 
+        _showSettingsMsg = RegisterWindowMessage("VideoWallpaper_ShowSettings");
+
         // Single instance check
         _mutex = new Mutex(true, "VideoWallpaper_SingleInstance", out bool isNew);
         if (!isNew)
         {
-            MessageBox.Show("Video Wallpaper đang chạy.", "Video Wallpaper",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            // Báo instance đang chạy mở cửa sổ cài đặt
+            PostMessage(HWND_BROADCAST, _showSettingsMsg, IntPtr.Zero, IntPtr.Zero);
             Shutdown();
             return;
         }
@@ -175,7 +187,9 @@ public partial class App : Application
         var source = HwndSource.FromHwnd(new WindowInteropHelper(_mainWindow).EnsureHandle());
         source?.AddHook((IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
         {
-            if ((uint)msg == WallpaperService.WM_TASKBAR_CREATED)
+            var uMsg = (uint)msg;
+
+            if (uMsg == WallpaperService.WM_TASKBAR_CREATED)
             {
                 // Explorer restarted, re-attach wallpaper after a short delay
                 var timer = new System.Windows.Threading.DispatcherTimer
@@ -192,6 +206,12 @@ public partial class App : Application
                 };
                 timer.Start();
             }
+            else if (uMsg == _showSettingsMsg)
+            {
+                ShowSettings();
+                handled = true;
+            }
+
             return IntPtr.Zero;
         });
     }

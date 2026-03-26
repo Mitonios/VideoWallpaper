@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -36,6 +38,9 @@ public partial class MainWindow : Window
         _autostartService = autostartService;
         _wallpaperWindow = wallpaperWindow;
         _config = config;
+
+        var ver = Assembly.GetExecutingAssembly().GetName().Version;
+        Title = $"Video Wallpaper v{ver?.Major}.{ver?.Minor}.{ver?.Build}";
 
         DebugLogger.Log($"MainWindow created. Config: VideoPath={config.VideoPath}, IsPlaying={config.IsPlaying}, MonitorDevice={config.MonitorDevice}");
         DebugLogger.Log($"Log file: {DebugLogger.LogFilePath}");
@@ -161,6 +166,120 @@ public partial class MainWindow : Window
             timer.Stop();
         };
         timer.Start();
+    }
+
+    private async void OptimizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_config.VideoPath) || !File.Exists(_config.VideoPath))
+        {
+            System.Windows.MessageBox.Show("Vui lòng chọn file video trước.", "Chưa có file", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        // Kiểm tra ffmpeg có trong PATH không
+        if (!IsFfmpegAvailable())
+        {
+            System.Windows.MessageBox.Show(
+                "Không tìm thấy ffmpeg.\n\nCài đặt: https://ffmpeg.org/download.html\nSau đó thêm vào PATH và khởi động lại app.",
+                "Thiếu ffmpeg", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+            return;
+        }
+
+        var inputPath = _config.VideoPath;
+        var outputPath = Path.Combine(
+            Path.GetDirectoryName(inputPath)!,
+            Path.GetFileNameWithoutExtension(inputPath) + "_optimized.mp4");
+
+        if (File.Exists(outputPath))
+        {
+            var overwrite = System.Windows.MessageBox.Show(
+                $"File đã tồn tại:\n{Path.GetFileName(outputPath)}\n\nGhi đè?",
+                "Tồn tại", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
+            if (overwrite != System.Windows.MessageBoxResult.Yes) return;
+            File.Delete(outputPath);
+        }
+
+        SetOptimizeUI(isRunning: true, status: "Đang tối ưu hóa...");
+        DebugLogger.Log($"OptimizeVideo: {inputPath} → {outputPath}");
+
+        var args = $"-i \"{inputPath}\" -c:v libx264 -preset fast -crf 23 " +
+                   $"-vf \"scale='min(iw,1920)':'min(ih,1080)',scale=trunc(iw/2)*2:trunc(ih/2)*2\" " +
+                   $"-an -movflags +faststart -y \"{outputPath}\"";
+
+        var (success, errorOutput) = await RunFfmpegAsync(args);
+
+        if (success && File.Exists(outputPath))
+        {
+            var inputSize = new FileInfo(inputPath).Length / 1024.0 / 1024.0;
+            var outputSize = new FileInfo(outputPath).Length / 1024.0 / 1024.0;
+            DebugLogger.Log($"OptimizeVideo OK: {inputSize:F1}MB → {outputSize:F1}MB");
+
+            var useNew = System.Windows.MessageBox.Show(
+                $"Tối ưu xong!\n\n" +
+                $"Trước: {inputSize:F1} MB  →  Sau: {outputSize:F1} MB\n\n" +
+                $"Dùng file đã tối ưu ngay?",
+                "Hoàn thành", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Information);
+
+            if (useNew == System.Windows.MessageBoxResult.Yes)
+            {
+                _config.VideoPath = outputPath;
+                FileNameDisplay.Text = Path.GetFileName(outputPath);
+                UpdateSaveStatus(false);
+                if (_config.IsPlaying) StartPlayback();
+            }
+        }
+        else
+        {
+            DebugLogger.Log($"OptimizeVideo FAILED: {errorOutput}");
+            System.Windows.MessageBox.Show(
+                $"ffmpeg thất bại:\n\n{errorOutput?.Split('\n').LastOrDefault(l => l.Length > 0)}",
+                "Lỗi", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+        }
+
+        SetOptimizeUI(isRunning: false, status: "");
+    }
+
+    private static bool IsFfmpegAvailable()
+    {
+        try
+        {
+            var p = Process.Start(new ProcessStartInfo("ffmpeg", "-version")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            p?.WaitForExit(3000);
+            return p?.ExitCode == 0;
+        }
+        catch { return false; }
+    }
+
+    private static async Task<(bool success, string? error)> RunFfmpegAsync(string args)
+    {
+        var psi = new ProcessStartInfo("ffmpeg", args)
+        {
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process { StartInfo = psi };
+        process.Start();
+
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        return (process.ExitCode == 0, stderr);
+    }
+
+    private void SetOptimizeUI(bool isRunning, string status)
+    {
+        OptimizeButton.IsEnabled = !isRunning;
+        OptimizeProgressPanel.Visibility = isRunning ? Visibility.Visible : Visibility.Collapsed;
+        OptimizeHintText.Visibility = isRunning ? Visibility.Collapsed : Visibility.Visible;
+        OptimizeStatusText.Text = status;
     }
 
     private void OpenLogButton_Click(object sender, RoutedEventArgs e)

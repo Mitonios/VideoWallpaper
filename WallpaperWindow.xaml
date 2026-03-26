@@ -11,6 +11,8 @@
                   Stretch="UniformToFill"
                   LoadedBehavior="Manual"
                   UnloadedBehavior="Stop"
+                  RenderOptions.BitmapScalingMode="LowQuality"
+                  RenderOptions.EdgeMode="Aliased"
                   MediaOpened="VideoPlayer_MediaOpened"
                   MediaFailed="VideoPlayer_MediaFailed"
                   MediaEnded="VideoPlayer_MediaEnded" />

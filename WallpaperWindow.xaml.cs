@@ -14,6 +14,8 @@ public partial class WallpaperWindow : Window
     public WallpaperWindow()
     {
         InitializeComponent();
+        // Giảm priority render để không tranh CPU với foreground apps
+        System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.Default;
         DebugLogger.Log("WallpaperWindow created.");
     }
 
