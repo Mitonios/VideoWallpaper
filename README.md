@@ -52,10 +52,21 @@ VS Code / Cursor: `Ctrl+Shift+B` chạy `dotnet run` trực tiếp.
 
 ---
 
+## Video mẫu
+
+Thư mục [`samples/`](samples/) chứa 2 video mẫu để thử ngay:
+
+| File | Kích thước | Mô tả |
+| --- | --- | --- |
+| `s1.mp4` | 1.6 MB | Video mẫu 1 |
+| `s2.mp4` | 3.6 MB | Video mẫu 2 |
+
+---
+
 ## Sử dụng
 
 1. Chạy ứng dụng — cửa sổ Settings hiện ra
-2. **Browse…** → chọn file video (MP4 H.264 khuyên dùng)
+2. **Browse…** → chọn file video trong `samples/` để thử ngay, hoặc chọn file của bạn
 3. Chọn màn hình hiển thị (nếu có nhiều monitor)
 4. Bật **toggle** để phát video làm wallpaper
 5. **Lưu cài đặt** để lưu cấu hình

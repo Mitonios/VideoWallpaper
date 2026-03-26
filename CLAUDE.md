@@ -91,3 +91,7 @@ Log resets on each startup. Key entries:
 ## Codec support
 
 `MediaElement` uses Windows Media Foundation. MP4 H.264 works natively. MKV/H.265 may require codec pack. `MediaFailed` event shows user-friendly error with codec install hint.
+
+## Sample videos
+
+`samples/s1.mp4` and `samples/s2.mp4` are bundled for quick testing — users can load these immediately without sourcing their own video.
