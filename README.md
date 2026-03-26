@@ -1,6 +1,16 @@
 # Video Wallpaper
 
-Ứng dụng desktop Windows phát file video làm hình nền động — video chạy phía sau icon desktop và tất cả cửa sổ, đúng layer wallpaper tĩnh của Windows. Chạy nền ở system tray, không chiếm taskbar.
+**Đặt video làm hình nền động trên Windows** — video phát liên tục phía sau icon desktop và tất cả cửa sổ, đúng như wallpaper tĩnh mặc định của Windows. Chạy nền ở system tray, không chiếm taskbar, không gây phiền nhiễu.
+
+Sử dụng kỹ thuật **WorkerW injection** qua Win32 API để nhúng cửa sổ WPF vào đúng layer desktop của `explorer.exe` — không dùng hook hay driver, chỉ là Windows API thuần.
+
+---
+
+## Screenshots
+
+![Cửa sổ Settings](docs/screenshots/main-window.png)
+
+> *Cửa sổ Settings: chọn video, màn hình, bật/tắt phát và tối ưu hóa file*
 
 ---
 
@@ -62,7 +72,7 @@ Nhấn **"Tối ưu video…"** để chạy ffmpeg tự động:
 ### Tray icon
 
 | Thao tác | Kết quả |
-|---|---|
+| --- | --- |
 | Click trái | Mở lại cửa sổ Settings |
 | Click phải | Menu: Mở cài đặt / Thoát |
 | Mở app lần 2 | Tự động focus cửa sổ Settings đang chạy |
@@ -77,7 +87,7 @@ Bật checkbox **"Khởi động cùng Windows"** → ghi registry `HKCU\...\Run
 
 App tạo `WallpaperWindow` (WPF, fullscreen, không border) chứa `MediaElement`, sau đó dùng Win32 API để gắn vào **WorkerW layer** của Windows Explorer:
 
-```
+```text
 SendMessageTimeout(Progman, 0x052C)   ← tạo WorkerW
 → EnumWindows tìm WorkerW sau SHELLDLL_DefView
 → SetParent(WallpaperHwnd, WorkerW)   ← gắn vào đúng layer
@@ -91,7 +101,7 @@ Khi `explorer.exe` restart, app nhận broadcast `TaskbarCreated` và tự re-at
 ## Cấu hình
 
 | File | Đường dẫn |
-|---|---|
+| --- | --- |
 | Config | `%AppData%\VideoWallpaper\config.json` |
 | Debug log | `%LocalAppData%\VideoWallpaper\debug.log` |
 
