@@ -57,7 +57,8 @@ public partial class WallpaperWindow : Window
             _storyboard.Stop();
             _storyboard = null;
         }
-        VideoPlayer.Close();
+        // Không gọi VideoPlayer.Close() vì LoadedBehavior=Play — dùng Source=null để release file
+        VideoPlayer.Source = null;
     }
 
     public void PositionOnMonitor(Rectangle bounds)
@@ -97,7 +98,13 @@ public partial class WallpaperWindow : Window
 
     private void VideoPlayer_MediaEnded(object sender, RoutedEventArgs e)
     {
-        // Với Storyboard RepeatBehavior.Forever thì không nên xảy ra
-        DebugLogger.Log("MediaEnded fired (unexpected with RepeatBehavior.Forever).");
+        // Không nên xảy ra với RepeatBehavior.Forever, nhưng một số codec/video
+        // trigger MediaEnded trước khi Storyboard kịp seek lại đầu — restart thủ công.
+        DebugLogger.Log("[WARN] MediaEnded fired unexpectedly — restarting Storyboard.");
+        if (_storyboard != null)
+        {
+            _storyboard.Stop();
+            _storyboard.Begin();
+        }
     }
 }
