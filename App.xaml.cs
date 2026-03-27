@@ -27,6 +27,7 @@ public partial class App : Application
     private WallpaperWindow? _wallpaperWindow;
     private MainWindow? _mainWindow;
     private WallpaperService? _wallpaperService;
+    private System.Windows.Threading.DispatcherTimer? _attachHeartbeat;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -110,8 +111,12 @@ public partial class App : Application
                 _mainWindow.Show();
             }
 
-            // Setup explorer restart recovery
+            // Setup explorer restart recovery + display change hook
             SetupExplorerRestartHook();
+
+            // Heartbeat: kiểm tra mỗi 10s wallpaper còn gắn vào WorkerW không
+            SetupAttachHeartbeat();
+
             DebugLogger.Log("App startup complete.");
         }
         catch (Exception ex)
@@ -185,22 +190,27 @@ public partial class App : Application
 
         // Listen for TaskbarCreated message (broadcast when explorer.exe restarts)
         var source = HwndSource.FromHwnd(new WindowInteropHelper(_mainWindow).EnsureHandle());
+        const uint WM_DISPLAYCHANGE = 0x007E;
+
         source?.AddHook((IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
         {
             var uMsg = (uint)msg;
 
-            if (uMsg == WallpaperService.WM_TASKBAR_CREATED)
+            if (uMsg == WallpaperService.WM_TASKBAR_CREATED || uMsg == WM_DISPLAYCHANGE)
             {
-                // Explorer restarted, re-attach wallpaper after a short delay
+                var reason = uMsg == WallpaperService.WM_TASKBAR_CREATED ? "TaskbarCreated" : "DisplayChange";
+                DebugLogger.Log($"[Hook] {reason} — scheduling re-attach in 1.5s");
+
                 var timer = new System.Windows.Threading.DispatcherTimer
                 {
-                    Interval = TimeSpan.FromMilliseconds(1000)
+                    Interval = TimeSpan.FromMilliseconds(1500)
                 };
                 timer.Tick += (_, _) =>
                 {
                     timer.Stop();
                     if (_wallpaperWindow.IsVisible && _wallpaperService != null)
                     {
+                        DebugLogger.Log($"[Hook] Re-attaching after {reason}");
                         _wallpaperService.ReAttach(_wallpaperWindow.GetHandle());
                     }
                 };
@@ -216,8 +226,31 @@ public partial class App : Application
         });
     }
 
+    private void SetupAttachHeartbeat()
+    {
+        _attachHeartbeat = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(10)
+        };
+        _attachHeartbeat.Tick += (_, _) =>
+        {
+            if (_wallpaperWindow == null || !_wallpaperWindow.IsVisible || _wallpaperService == null)
+                return;
+
+            var handle = _wallpaperWindow.GetHandle();
+            if (!_wallpaperService.IsAttachedToWorkerW(handle))
+            {
+                DebugLogger.Log("[Heartbeat] WallpaperWindow detached from WorkerW — re-attaching.");
+                _wallpaperService.ReAttach(handle);
+            }
+        };
+        _attachHeartbeat.Start();
+        DebugLogger.Log("Attach heartbeat started (interval=10s).");
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
+        _attachHeartbeat?.Stop();
         _wallpaperWindow?.StopVideo();
         _wallpaperWindow?.Close();
 

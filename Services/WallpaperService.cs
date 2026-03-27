@@ -39,6 +39,10 @@ public class WallpaperService
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindow(IntPtr hwnd);
 
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+    private const uint GA_PARENT = 1;
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder lpClassName, int nMaxCount);
 
@@ -169,5 +173,16 @@ public class WallpaperService
         GetWorkerW();
         if (_workerW != IntPtr.Zero)
             SetParent(wpfHandle, _workerW);
+    }
+
+    /// <summary>
+    /// Kiểm tra wallpaper window có đang được gắn đúng vào WorkerW không.
+    /// Trả về false nếu WorkerW không còn valid hoặc parent đã đổi.
+    /// </summary>
+    public bool IsAttachedToWorkerW(IntPtr wpfHandle)
+    {
+        if (_workerW == IntPtr.Zero || !IsWindow(_workerW)) return false;
+        var actualParent = GetAncestor(wpfHandle, GA_PARENT);
+        return actualParent == _workerW;
     }
 }
