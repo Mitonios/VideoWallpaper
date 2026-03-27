@@ -39,8 +39,11 @@ public partial class MainWindow : Window
         _wallpaperWindow = wallpaperWindow;
         _config = config;
 
-        var ver = Assembly.GetExecutingAssembly().GetName().Version;
-        Title = $"Video Wallpaper v{ver?.Major}.{ver?.Minor}.{ver?.Build}";
+        var asm = Assembly.GetExecutingAssembly();
+        var ver = asm.GetName().Version;
+        var buildTime = asm.GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "BuildTime")?.Value ?? "";
+        Title = $"Video Wallpaper v{ver?.Major}.{ver?.Minor}.{ver?.Build} ({buildTime})";
 
         DebugLogger.Log($"MainWindow created. Config: VideoPath={config.VideoPath}, IsPlaying={config.IsPlaying}, MonitorDevice={config.MonitorDevice}");
         DebugLogger.Log($"Log file: {DebugLogger.LogFilePath}");
