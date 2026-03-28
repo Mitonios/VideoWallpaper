@@ -9,8 +9,8 @@
         Background="Black">
     <MediaElement x:Name="VideoPlayer"
                   Stretch="UniformToFill"
-                  LoadedBehavior="Play"
-                  UnloadedBehavior="Stop"
+                  LoadedBehavior="Manual"
+                  UnloadedBehavior="Manual"
                   RenderOptions.BitmapScalingMode="LowQuality"
                   RenderOptions.EdgeMode="Aliased"
                   MediaOpened="VideoPlayer_MediaOpened"

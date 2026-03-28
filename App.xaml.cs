@@ -28,6 +28,7 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private WallpaperService? _wallpaperService;
     private System.Windows.Threading.DispatcherTimer? _attachHeartbeat;
+    private int _heartbeatCount;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -234,14 +235,28 @@ public partial class App : Application
         };
         _attachHeartbeat.Tick += (_, _) =>
         {
-            if (_wallpaperWindow == null || !_wallpaperWindow.IsVisible || _wallpaperService == null)
-                return;
-
-            var handle = _wallpaperWindow.GetHandle();
-            if (!_wallpaperService.IsAttachedToWorkerW(handle))
+            try
             {
-                DebugLogger.Log("[Heartbeat] WallpaperWindow detached from WorkerW — re-attaching.");
-                _wallpaperService.ReAttach(handle);
+                if (_wallpaperWindow == null || !_wallpaperWindow.IsPlaybackActive || _wallpaperService == null)
+                    return;
+
+                _heartbeatCount++;
+                // Log status mỗi phút (6 tick × 10s) để confirm heartbeat đang chạy
+                if (_heartbeatCount % 6 == 0)
+                    DebugLogger.Log($"[Heartbeat] Alive (tick #{_heartbeatCount})");
+
+                var handle = _wallpaperWindow.GetHandle();
+                if (!_wallpaperService.IsAttachedToWorkerW(handle))
+                {
+                    DebugLogger.Log("[Heartbeat] WallpaperWindow detached from WorkerW — re-attaching.");
+                    _wallpaperService.ReAttach(handle);
+                }
+
+                _wallpaperWindow.CheckPlaybackHealth();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.LogError("Heartbeat tick error", ex);
             }
         };
         _attachHeartbeat.Start();

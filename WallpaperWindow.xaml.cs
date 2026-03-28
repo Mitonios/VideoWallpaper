@@ -2,21 +2,30 @@ using System.Drawing;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using VideoWallpaper.Services;
 
 namespace VideoWallpaper;
 
 public partial class WallpaperWindow : Window
 {
-    private Storyboard? _storyboard;
+    private string? _currentFilePath;
+    private int _renderFrameCount;
+    private int _lastCheckedFrameCount;
+
+    public bool IsPlaybackActive { get; private set; }
 
     public WallpaperWindow()
     {
         InitializeComponent();
-        // Giảm priority render để không tranh CPU với foreground apps
         System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.Default;
+        CompositionTarget.Rendering += OnRendering;
         DebugLogger.Log("WallpaperWindow created.");
+    }
+
+    private void OnRendering(object? sender, EventArgs e)
+    {
+        if (IsPlaybackActive)
+            _renderFrameCount++;
     }
 
     public void PlayVideo(string filePath)
@@ -32,33 +41,29 @@ public partial class WallpaperWindow : Window
             return;
         }
 
+        _currentFilePath = filePath;
+        _renderFrameCount = 0;
+        _lastCheckedFrameCount = 0;
+
         var uri = new Uri(filePath);
         DebugLogger.Log($"  URI: {uri}");
 
-        var timeline = new MediaTimeline(uri)
-        {
-            RepeatBehavior = RepeatBehavior.Forever
-        };
-
-        _storyboard = new Storyboard();
-        _storyboard.Children.Add(timeline);
-        Storyboard.SetTarget(timeline, VideoPlayer);
-
-        DebugLogger.Log("  Starting Storyboard...");
-        _storyboard.Begin();
-        DebugLogger.Log("  Storyboard.Begin() called.");
+        VideoPlayer.Source = uri;
+        VideoPlayer.Play();
+        IsPlaybackActive = true;
+        DebugLogger.Log("  VideoPlayer.Play() called.");
     }
 
     public void StopVideo()
     {
-        if (_storyboard != null)
-        {
-            DebugLogger.Log("StopVideo: stopping storyboard.");
-            _storyboard.Stop();
-            _storyboard = null;
-        }
-        // Không gọi VideoPlayer.Close() vì LoadedBehavior=Play — dùng Source=null để release file
+        if (IsPlaybackActive)
+            DebugLogger.Log("StopVideo called.");
+
+        VideoPlayer.Stop();
+        VideoPlayer.Close();
         VideoPlayer.Source = null;
+        IsPlaybackActive = false;
+        _currentFilePath = null;
     }
 
     public void PositionOnMonitor(Rectangle bounds)
@@ -80,9 +85,59 @@ public partial class WallpaperWindow : Window
         return handle;
     }
 
+    /// <summary>
+    /// Detect rendering freeze via CompositionTarget.Rendering frame count.
+    /// Nếu frame count không tăng giữa 2 tick (10s) → WPF rendering pipeline đã chết → restart video.
+    /// </summary>
+    public void CheckPlaybackHealth()
+    {
+        if (!IsPlaybackActive || _currentFilePath == null)
+            return;
+
+        var frames = _renderFrameCount;
+        var delta = frames - _lastCheckedFrameCount;
+        var pos = VideoPlayer.Position;
+
+        DebugLogger.Log($"[Heartbeat] Pos={pos:mm\\:ss\\.f}, frames={frames} (Δ{delta})");
+
+        if (_lastCheckedFrameCount > 0 && delta == 0)
+        {
+            DebugLogger.Log("[Heartbeat] Rendering frozen! Δframes=0 — restarting video.");
+            RestartVideo();
+        }
+
+        _lastCheckedFrameCount = frames;
+    }
+
+    private void RestartVideo()
+    {
+        if (_currentFilePath == null) return;
+
+        var savedPos = VideoPlayer.Position;
+        var filePath = _currentFilePath;
+
+        VideoPlayer.Stop();
+        VideoPlayer.Close();
+        VideoPlayer.Source = null;
+
+        VideoPlayer.Source = new Uri(filePath);
+        VideoPlayer.Play();
+        _pendingSeek = savedPos;
+        DebugLogger.Log($"  RestartVideo: will seek to {savedPos:mm\\:ss\\.f} after MediaOpened.");
+    }
+
+    private TimeSpan? _pendingSeek;
+
     private void VideoPlayer_MediaOpened(object sender, RoutedEventArgs e)
     {
         DebugLogger.Log($"[OK] MediaOpened! NaturalVideoWidth={VideoPlayer.NaturalVideoWidth}, NaturalVideoHeight={VideoPlayer.NaturalVideoHeight}");
+
+        if (_pendingSeek.HasValue)
+        {
+            DebugLogger.Log($"  Seeking to saved position: {_pendingSeek.Value:mm\\:ss\\.f}");
+            VideoPlayer.Position = _pendingSeek.Value;
+            _pendingSeek = null;
+        }
     }
 
     private void VideoPlayer_MediaFailed(object sender, ExceptionRoutedEventArgs e)
@@ -90,7 +145,6 @@ public partial class WallpaperWindow : Window
         DebugLogger.Log($"[ERROR] MediaFailed! {e.ErrorException?.GetType().Name}: {e.ErrorException?.Message}");
         DebugLogger.Log($"  Source: {VideoPlayer.Source}");
 
-        // Báo lên MainWindow để hiển thị lỗi cho user
         MediaLoadFailed?.Invoke(this, e.ErrorException?.Message ?? "Unknown error");
     }
 
@@ -98,13 +152,8 @@ public partial class WallpaperWindow : Window
 
     private void VideoPlayer_MediaEnded(object sender, RoutedEventArgs e)
     {
-        // Không nên xảy ra với RepeatBehavior.Forever, nhưng một số codec/video
-        // trigger MediaEnded trước khi Storyboard kịp seek lại đầu — restart thủ công.
-        DebugLogger.Log("[WARN] MediaEnded fired unexpectedly — restarting Storyboard.");
-        if (_storyboard != null)
-        {
-            _storyboard.Stop();
-            _storyboard.Begin();
-        }
+        DebugLogger.Log("[Loop] MediaEnded — seeking to start.");
+        VideoPlayer.Position = TimeSpan.Zero;
+        VideoPlayer.Play();
     }
 }
